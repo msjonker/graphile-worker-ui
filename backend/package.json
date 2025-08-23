@@ -1,0 +1,35 @@
+{
+  "name": "graphile-worker-backend",
+  "version": "1.0.0",
+  "description": "PostGraphile backend for Graphile Worker UI",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=../.env index.js",
+    "dev": "nodemon --env-file=../.env index.js",
+    "build": "echo 'No build step required'",
+    "test": "echo 'No tests specified'"
+  },
+  "dependencies": {
+    "@graphile/pg-aggregates": "^0.1.1",
+    "@graphile/pg-pubsub": "^4.12.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "graphile-build-pg": "^4.13.0",
+    "graphql-ws": "^5.14.2",
+    "pg": "^8.11.3",
+    "postgraphile": "^4.13.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "graphile-worker",
+    "postgraphile",
+    "graphql",
+    "job-queue"
+  ],
+  "author": "",
+  "license": "ISC"
+}
