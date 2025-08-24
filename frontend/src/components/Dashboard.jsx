@@ -150,14 +150,16 @@ const Dashboard = ({ jobs, loading, onJobSelect, jobStats, recentFailedJobs = []
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
+              <BarChart data={chartData} margin={{ top: 10, right: 16, left: 8, bottom: 80 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis 
                   dataKey="name" 
                   tick={{ fontSize: 12 }}
                   angle={-45}
                   textAnchor="end"
-                  height={60}
+                  height={80}
+                  tickMargin={12}
+                  interval={0}
                 />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip 

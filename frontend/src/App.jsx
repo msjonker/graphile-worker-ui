@@ -3,6 +3,7 @@ import { Routes, Route, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@apollo/client'
 import { gql } from '@apollo/client'
 import JobList from './components/JobList'
+import Queues from './components/Queues'
 import Dashboard from './components/Dashboard'
 import { 
   Activity, 
@@ -286,13 +287,7 @@ function App() {
               }
             />
             <Route path="/jobs" element={<JobList />} />
-            <Route path="/queues" element={(
-              <div className="text-center py-16">
-                <Clock className="mx-auto h-16 w-16 text-gray-300" />
-                <h3 className="mt-4 text-lg font-medium text-gray-900">Queue Management</h3>
-                <p className="mt-2 text-gray-500">Queue monitoring and management features coming soon...</p>
-              </div>
-            )} />
+            <Route path="/queues" element={<Queues />} />
             <Route path="/activity" element={(
               <div className="text-center py-16">
                 <Activity className="mx-auto h-16 w-16 text-gray-300" />
