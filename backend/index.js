@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { useServer } from 'graphql-ws/lib/use/ws';
 import PgAggregatesPlugin from '@graphile/pg-aggregates';
 import ConnectionFilterPlugin from 'postgraphile-plugin-connection-filter';
-
+import { TagsFilePlugin } from 'postgraphile/plugins.js'
 
 const app = express();
 const port = process.env.PORT || 5001;
@@ -112,7 +112,7 @@ const postgraphileOptions = {
   ignoreRBAC: false,
   showErrorStack: 'json',
   extendedErrors: ['hint', 'detail', 'errcode'],
-  appendPlugins: [JobManagementPlugin, ConnectionFilterPlugin, PgAggregatesPlugin.default],
+  appendPlugins: [TagsFilePlugin, JobManagementPlugin, ConnectionFilterPlugin, PgAggregatesPlugin.default],
   exportGqlSchemaPath: 'tmp/schema.graphql',
   graphiql: true,
   enhanceGraphiql: true,

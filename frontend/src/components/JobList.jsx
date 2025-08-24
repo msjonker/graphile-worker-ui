@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation } from '@apollo/client'
 import { gql } from '@apollo/client'
 import { formatDistanceToNow } from 'date-fns'
@@ -13,10 +13,12 @@ import {
   Filter,
   RefreshCw,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Copy
 } from 'lucide-react'
 import Pagination from './Pagination'
 import toast from 'react-hot-toast'
+import { useSearchParams } from 'react-router-dom'
 
 // Paginated query for JobList component (server-side filtering)
 const GET_PAGINATED_JOBS_QUERY = gql`
@@ -38,6 +40,9 @@ const GET_PAGINATED_JOBS_QUERY = gql`
         lockedBy
         revision
         flags
+        _privateJobById {
+          payload
+        }
       }
       totalCount
       pageInfo {
@@ -78,17 +83,64 @@ const COMPLETE_JOB_MUTATION = gql`
 `
 
 const JobList = () => {
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [taskFilter, setTaskFilter] = useState('all')
-  const [currentPage, setCurrentPage] = useState(0)
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Initialize state from URL params
+  const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '')
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || 'all')
+  const [taskFilter, setTaskFilter] = useState(() => searchParams.get('task') || 'all')
+  const [currentPage, setCurrentPage] = useState(() => {
+    const p = parseInt(searchParams.get('page') || '1', 10)
+    return Number.isFinite(p) && p > 0 ? p - 1 : 0
+  })
   const [pageSize] = useState(25) // 25 jobs per page
   const [expandedId, setExpandedId] = useState(null)
+  const didMountRef = useRef(false)
+  const updatingFromUrlRef = useRef(false)
 
-  // Reset to first page when filters/search change
+  // Reset to first page when filters/search change (skip first render and URL-driven updates)
   useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true
+      return
+    }
+    if (updatingFromUrlRef.current) {
+      // This state change came from URL; don't override page
+      updatingFromUrlRef.current = false
+      return
+    }
     setCurrentPage(0)
   }, [statusFilter, taskFilter, searchTerm])
+
+  // Keep URL in sync with state (use 1-based page in URL)
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (searchTerm) params.set('q', searchTerm)
+    if (statusFilter && statusFilter !== 'all') params.set('status', statusFilter)
+    if (taskFilter && taskFilter !== 'all') params.set('task', taskFilter)
+    const pageOneBased = (currentPage || 0) + 1
+    if (pageOneBased !== 1) params.set('page', String(pageOneBased))
+    const paramsStr = params.toString()
+    const currentStr = searchParams.toString()
+    if (paramsStr !== currentStr) {
+      setSearchParams(params)
+    }
+  }, [searchTerm, statusFilter, taskFilter, currentPage, setSearchParams])
+
+  // Update state if URL changes (e.g., browser back/forward)
+  useEffect(() => {
+    const q = searchParams.get('q') || ''
+    const status = searchParams.get('status') || 'all'
+    const task = searchParams.get('task') || 'all'
+    const p = parseInt(searchParams.get('page') || '1', 10)
+    const pageIdx = Number.isFinite(p) && p > 0 ? p - 1 : 0
+
+    // Mark that we're syncing from URL to avoid resetting page
+    updatingFromUrlRef.current = true
+    if (q !== searchTerm) setSearchTerm(q)
+    if (status !== statusFilter) setStatusFilter(status)
+    if (task !== taskFilter) setTaskFilter(task)
+    if (pageIdx !== currentPage) setCurrentPage(pageIdx)
+  }, [searchParams])
 
   // Build GraphQL filter (connection filter) based on filters
   const buildFilter = () => {
@@ -501,10 +553,20 @@ const JobList = () => {
                         </div>
                       </div>
                     </div>
-                    {typeof job.payload !== 'undefined' && (
+                    {job._privateJobById?.payload && (
                       <div className="mt-4">
-                        <div className="text-gray-500 mb-1">Payload</div>
-                        <pre className="whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 p-3 rounded max-h-64 overflow-auto">{JSON.stringify(job.payload, null, 2)}</pre>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-gray-500">Payload</div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(job._privateJobById.payload, null, 2)) }}
+                            className="inline-flex items-center px-2 py-1 border border-gray-200 text-xs leading-4 font-medium rounded-md text-gray-700 hover:bg-gray-50"
+                            title="Copy payload"
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            Copy
+                          </button>
+                        </div>
+                        <pre className="whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 p-3 rounded max-h-64 overflow-auto">{JSON.stringify(job._privateJobById.payload, null, 2)}</pre>
                       </div>
                     )}
                   </div>

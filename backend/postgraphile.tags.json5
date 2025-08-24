@@ -1,0 +1,15 @@
+{
+  version: 1,
+  config: {
+    class: {
+      _private_jobs: {
+        tags: {
+          primaryKey: "id",
+          foreignKey: [
+            "(id) references jobs (id)"
+          ]
+        }
+      }
+    },
+  },
+}
