@@ -11,6 +11,14 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Define build arguments for environment variables
+ARG VITE_GRAPHQL_URL
+ARG VITE_GRAPHQL_WS_URL
+
+# Set environment variables during the build process
+ENV VITE_GRAPHQL_URL=$VITE_GRAPHQL_URL
+ENV VITE_GRAPHQL_WS_URL=$VITE_GRAPHQL_WS_URL
+
 # Build the application
 RUN npm run build
 
