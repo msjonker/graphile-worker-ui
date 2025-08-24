@@ -4,19 +4,29 @@ services:
     ports:
       - "5001:5001"
     restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:5001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
       interval: 30s
       timeout: 10s
       retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   frontend:
     build: ./frontend
     ports:
       - "3001:80"
     environment:
-      - VITE_GRAPHQL_URL=http://localhost:5001/graphql
-      - VITE_GRAPHQL_WS_URL=ws://localhost:5001/graphql
+      NODE_ENV: production
+      VITE_GRAPHQL_URL: ${VITE_GRAPHQL_URL}
+      VITE_GRAPHQL_WS_URL: ${VITE_GRAPHQL_WS_URL}
     depends_on:
       - backend
     restart: unless-stopped
