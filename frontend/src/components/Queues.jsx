@@ -82,7 +82,7 @@ const Queues = () => {
             <div
               key={q.name}
               className="px-6 py-4 hover:bg-gray-50 cursor-pointer flex items-center justify-between"
-              onClick={() => navigate(`/jobs?q=${encodeURIComponent(q.name)}`)}
+              onClick={() => navigate(`/jobs?queue=${encodeURIComponent(q.name)}`)}
               title={`View jobs in ${q.name}`}
             >
               <div>

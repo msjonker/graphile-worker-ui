@@ -64,6 +64,17 @@ const GET_UNIQUE_TASKS = gql`
   }
 `
 
+// Efficient unique queue names via aggregates
+const GET_UNIQUE_QUEUES = gql`
+  query GetUniqueQueues {
+    allJobs {
+      groupedAggregates(groupBy: QUEUE_NAME) {
+        keys
+      }
+    }
+  }
+`
+
 const RETRY_JOB_MUTATION = gql`
   mutation RetryJob($jobId: String!) {
     retryJob(jobId: $jobId)
@@ -88,6 +99,7 @@ const JobList = () => {
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '')
   const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || 'all')
   const [taskFilter, setTaskFilter] = useState(() => searchParams.get('task') || 'all')
+  const [queueFilter, setQueueFilter] = useState(() => searchParams.get('queue') || 'all')
   const [currentPage, setCurrentPage] = useState(() => {
     const p = parseInt(searchParams.get('page') || '1', 10)
     return Number.isFinite(p) && p > 0 ? p - 1 : 0
@@ -109,7 +121,7 @@ const JobList = () => {
       return
     }
     setCurrentPage(0)
-  }, [statusFilter, taskFilter, searchTerm])
+  }, [statusFilter, taskFilter, queueFilter, searchTerm])
 
   // Keep URL in sync with state (use 1-based page in URL)
   useEffect(() => {
@@ -117,6 +129,7 @@ const JobList = () => {
     if (searchTerm) params.set('q', searchTerm)
     if (statusFilter && statusFilter !== 'all') params.set('status', statusFilter)
     if (taskFilter && taskFilter !== 'all') params.set('task', taskFilter)
+    if (queueFilter && queueFilter !== 'all') params.set('queue', queueFilter)
     const pageOneBased = (currentPage || 0) + 1
     if (pageOneBased !== 1) params.set('page', String(pageOneBased))
     const paramsStr = params.toString()
@@ -124,13 +137,14 @@ const JobList = () => {
     if (paramsStr !== currentStr) {
       setSearchParams(params)
     }
-  }, [searchTerm, statusFilter, taskFilter, currentPage, setSearchParams])
+  }, [searchTerm, statusFilter, taskFilter, queueFilter, currentPage, setSearchParams])
 
   // Update state if URL changes (e.g., browser back/forward)
   useEffect(() => {
     const q = searchParams.get('q') || ''
     const status = searchParams.get('status') || 'all'
     const task = searchParams.get('task') || 'all'
+    const queue = searchParams.get('queue') || 'all'
     const p = parseInt(searchParams.get('page') || '1', 10)
     const pageIdx = Number.isFinite(p) && p > 0 ? p - 1 : 0
 
@@ -139,6 +153,7 @@ const JobList = () => {
     if (q !== searchTerm) setSearchTerm(q)
     if (status !== statusFilter) setStatusFilter(status)
     if (task !== taskFilter) setTaskFilter(task)
+    if (queue !== queueFilter) setQueueFilter(queue)
     if (pageIdx !== currentPage) setCurrentPage(pageIdx)
   }, [searchParams])
 
@@ -147,6 +162,9 @@ const JobList = () => {
     const filter = {}
     if (taskFilter !== 'all') {
       filter.taskIdentifier = { equalTo: taskFilter }
+    }
+    if (queueFilter !== 'all') {
+      filter.queueName = { equalTo: queueFilter }
     }
     switch (statusFilter) {
       case 'running':
@@ -193,6 +211,11 @@ const JobList = () => {
     fetchPolicy: 'network-only',
   })
 
+  // Load unique queue names via Apollo useQuery
+  const { data: queuesData, loading: queuesLoading, error: queuesError } = useQuery(GET_UNIQUE_QUEUES, {
+    fetchPolicy: 'network-only',
+  })
+
   const jobs = data?.allJobs?.nodes || []
   const totalCount = data?.allJobs?.totalCount || 0
   const totalPages = Math.ceil(totalCount / pageSize)
@@ -209,6 +232,11 @@ const JobList = () => {
     .filter(Boolean)
     .sort()
 
+  const uniqueQueues = (queuesData?.allJobs?.groupedAggregates || [])
+    .map(g => Array.isArray(g?.keys) ? g.keys[0] : null)
+    .filter(Boolean)
+    .sort()
+
   // Filter jobs based on search and filters
   const filteredJobs = jobs.filter(job => {
     const ti = job.taskIdentifier || ''
@@ -219,8 +247,9 @@ const JobList = () => {
 
     const matchesStatus = statusFilter === 'all' || getJobStatus(job) === statusFilter
     const matchesTask = taskFilter === 'all' || job.taskIdentifier === taskFilter
+    const matchesQueue = queueFilter === 'all' || job.queueName === queueFilter
 
-    return matchesSearch && matchesStatus && matchesTask
+    return matchesSearch && matchesStatus && matchesTask && matchesQueue
   })
 
   function getJobStatus(job) {
@@ -369,7 +398,7 @@ const JobList = () => {
         </div>
 
         {/* Search and Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input
@@ -401,6 +430,17 @@ const JobList = () => {
             <option value="all">All Tasks</option>
             {uniqueTasks.map(task => (
               <option key={task} value={task}>{task}</option>
+            ))}
+          </select>
+
+          <select
+            value={queueFilter}
+            onChange={(e) => handleFilterChange('queue', e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+          >
+            <option value="all">All Queues</option>
+            {uniqueQueues.map(queue => (
+              <option key={queue} value={queue}>{queue}</option>
             ))}
           </select>
         </div>

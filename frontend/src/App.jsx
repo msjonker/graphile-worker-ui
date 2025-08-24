@@ -5,6 +5,7 @@ import { gql } from '@apollo/client'
 import JobList from './components/JobList'
 import Queues from './components/Queues'
 import Dashboard from './components/Dashboard'
+import JobPage from './components/JobPage'
 import { 
   Activity, 
   List, 
@@ -102,8 +103,9 @@ function App() {
     { id: 'settings', path: '/settings', label: 'Settings', icon: Settings, description: 'Configuration' },
   ]
 
-  const handleJobSelect = () => {
-    navigate('/jobs')
+  const handleJobSelect = (id) => {
+    if (id) navigate(`/jobs/${id}`)
+    else navigate('/jobs')
   }
 
   // Use optimized counts (pending derived to avoid column-to-column comparison)
@@ -287,6 +289,7 @@ function App() {
               }
             />
             <Route path="/jobs" element={<JobList />} />
+            <Route path="/jobs/:id" element={<JobPage />} />
             <Route path="/queues" element={<Queues />} />
             <Route path="/activity" element={(
               <div className="text-center py-16">
