@@ -13,6 +13,8 @@ import './index.css'
 // HTTP link for queries and mutations
 const httpLink = createHttpLink({
   uri: import.meta.env.VITE_GRAPHQL_URL || 'http://localhost:5001/graphql',
+  credentials: "include",             // 👈 send cookies
+  fetchOptions: { credentials: "include" },
 })
 
 // WebSocket link for subscriptions
