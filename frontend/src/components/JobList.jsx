@@ -1,10 +1,9 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation } from '@apollo/client'
 import { gql } from '@apollo/client'
 import { formatDistanceToNow } from 'date-fns'
 import { 
   Play, 
-  Pause, 
   RotateCcw, 
   X, 
   CheckCircle, 
@@ -13,15 +12,16 @@ import {
   Search,
   Filter,
   RefreshCw,
-  ChevronLeft,
-  ChevronRight
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react'
+import Pagination from './Pagination'
 import toast from 'react-hot-toast'
 
-// Paginated query for JobList component
+// Paginated query for JobList component (server-side filtering)
 const GET_PAGINATED_JOBS_QUERY = gql`
-  query GetPaginatedJobs($first: Int, $offset: Int, $orderBy: [JobsOrderBy!], $condition: JobCondition) {
-    allJobs(first: $first, offset: $offset, orderBy: $orderBy, condition: $condition) {
+  query GetPaginatedJobs($first: Int, $offset: Int, $orderBy: [JobsOrderBy!], $filter: JobFilter) {
+    allJobs(first: $first, offset: $offset, orderBy: $orderBy, filter: $filter) {
       nodes {
         id
         queueName
@@ -48,6 +48,17 @@ const GET_PAGINATED_JOBS_QUERY = gql`
   }
 `
 
+// Efficient unique task identifiers via aggregates
+const GET_UNIQUE_TASKS = gql`
+  query GetUniqueTasks {
+    allJobs {
+      groupedAggregates(groupBy: TASK_IDENTIFIER) {
+        keys
+      }
+    }
+  }
+`
+
 const RETRY_JOB_MUTATION = gql`
   mutation RetryJob($jobId: String!) {
     retryJob(jobId: $jobId)
@@ -66,20 +77,53 @@ const COMPLETE_JOB_MUTATION = gql`
   }
 `
 
-const JobList = ({ onJobSelect, selectedJobId }) => {
+const JobList = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [taskFilter, setTaskFilter] = useState('all')
   const [currentPage, setCurrentPage] = useState(0)
   const [pageSize] = useState(25) // 25 jobs per page
+  const [expandedId, setExpandedId] = useState(null)
 
-  // Build GraphQL condition based on filters
-  const buildCondition = () => {
-    const conditions = {}
+  // Reset to first page when filters/search change
+  useEffect(() => {
+    setCurrentPage(0)
+  }, [statusFilter, taskFilter, searchTerm])
+
+  // Build GraphQL filter (connection filter) based on filters
+  const buildFilter = () => {
+    const filter = {}
     if (taskFilter !== 'all') {
-      conditions.taskIdentifier = taskFilter
+      filter.taskIdentifier = { equalTo: taskFilter }
     }
-    return Object.keys(conditions).length > 0 ? conditions : undefined
+    switch (statusFilter) {
+      case 'running':
+        filter.lockedAt = { isNull: false }
+        break
+      case 'failed':
+        filter.and = [
+          { lastError: { isNull: false } },
+          { lockedAt: { isNull: true } }
+        ]
+        break
+      case 'completed':
+        filter.and = [
+          { attempts: { greaterThan: 0 } },
+          { lastError: { isNull: true } },
+          { lockedAt: { isNull: true } }
+        ]
+        break
+      case 'pending':
+        // Approximate: never started and not locked
+        filter.and = [
+          { lockedAt: { isNull: true } },
+          { attempts: { equalTo: 0 } }
+        ]
+        break
+      default:
+        break
+    }
+    return Object.keys(filter).length > 0 ? filter : undefined
   }
 
   const { data, loading, error, refetch } = useQuery(GET_PAGINATED_JOBS_QUERY, {
@@ -87,9 +131,14 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
       first: pageSize,
       offset: currentPage * pageSize,
       orderBy: ['CREATED_AT_DESC'],
-      condition: buildCondition()
+      filter: buildFilter()
     },
     pollInterval: 5000, // Poll every 5 seconds for updates
+  })
+
+  // Load unique task identifiers via Apollo useQuery
+  const { data: tasksData, loading: tasksLoading, error: tasksError } = useQuery(GET_UNIQUE_TASKS, {
+    fetchPolicy: 'network-only',
   })
 
   const jobs = data?.allJobs?.nodes || []
@@ -102,13 +151,17 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
   const [cancelJob] = useMutation(CANCEL_JOB_MUTATION)
   const [completeJob] = useMutation(COMPLETE_JOB_MUTATION)
 
-  // Get unique task identifiers for filter
-  const uniqueTasks = [...new Set(jobs.map(job => job.taskIdentifier))].sort()
+  // Derive unique tasks from aggregates result
+  const uniqueTasks = (tasksData?.allJobs?.groupedAggregates || [])
+    .map(g => Array.isArray(g?.keys) ? g.keys[0] : null)
+    .filter(Boolean)
+    .sort()
 
   // Filter jobs based on search and filters
   const filteredJobs = jobs.filter(job => {
+    const ti = job.taskIdentifier || ''
     const matchesSearch = !searchTerm || 
-      job.taskIdentifier.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      ti.toLowerCase().includes(searchTerm.toLowerCase()) ||
       job.queueName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       job.key?.toLowerCase().includes(searchTerm.toLowerCase())
 
@@ -118,9 +171,10 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
     return matchesSearch && matchesStatus && matchesTask
   })
 
-  const getJobStatus = (job) => {
+  function getJobStatus(job) {
+    // Determine status similarly to dashboard counts
     if (job.lockedAt) return 'running'
-    if (job.attempts >= job.maxAttempts && job.lastError) return 'failed'
+    if (job.lastError && !job.lockedAt) return 'failed'
     if (job.attempts > 0 && !job.lastError && !job.lockedAt) return 'completed'
     return 'pending'
   }
@@ -215,6 +269,31 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
     )
   }
 
+  // Show GraphQL errors explicitly to aid debugging
+  if (error) {
+    return (
+      <div className="bg-white rounded-lg shadow">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="text-lg font-medium text-gray-900">Jobs</h2>
+        </div>
+        <div className="p-6">
+          <div className="mb-6 bg-red-50 border-l-4 border-red-400 p-4 rounded-lg">
+            <div className="text-sm text-red-700">
+              {error.message}
+            </div>
+          </div>
+          <button
+            onClick={() => refetch()}
+            className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          >
+            <RefreshCw className="h-4 w-4 mr-1" />
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="bg-white rounded-lg shadow">
       {/* Header with filters */}
@@ -275,6 +354,20 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
         </div>
       </div>
 
+      {/* Top Pagination Controls */}
+      {totalPages > 1 && (
+        <Pagination
+          top
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalCount={totalCount}
+          pageSize={pageSize}
+          hasNextPage={hasNextPage}
+          hasPreviousPage={hasPreviousPage}
+          onPageChange={(p) => setCurrentPage(p)}
+        />
+      )}
+
       {/* Job List */}
       <div className="divide-y divide-gray-200">
         {filteredJobs.length === 0 ? (
@@ -287,17 +380,17 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
           </div>
         ) : (
           filteredJobs.map((job) => {
-            const status = getJobStatus(job)
-            const StatusIcon = getStatusIcon(status)
-            const isSelected = selectedJobId === job.id
+            const status = getJobStatus(job);
+            const StatusIcon = getStatusIcon(status);
+            const isExpanded = expandedId === job.id;
 
             return (
               <div
                 key={job.id}
-                className={`px-6 py-4 hover:bg-gray-50 cursor-pointer transition-colors ${
-                  isSelected ? 'bg-blue-50 border-l-4 border-blue-500' : ''
+                className={`px-6 py-4 hover:bg-gray-50 cursor-pointer transition-colors border-b ${
+                  isExpanded ? 'bg-blue-50' : ''
                 }`}
-                onClick={() => onJobSelect(job.id)}
+                onClick={() => setExpandedId(isExpanded ? null : job.id)}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">
@@ -312,7 +405,7 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
                         </span>
                       )}
                     </div>
-                    
+
                     <div className="mt-1 flex items-center text-xs text-gray-500">
                       <span>
                         Created {formatDistanceToNow(new Date(job.createdAt), { addSuffix: true })}
@@ -338,7 +431,13 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(status)}`}>
                       {status}
                     </span>
-
+                    <button
+                      className="p-1 text-gray-400 hover:text-gray-600"
+                      onClick={(e) => { e.stopPropagation(); setExpandedId(isExpanded ? null : job.id) }}
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </button>
                     {/* Action buttons */}
                     <div className="flex items-center space-x-1">
                       {status === 'failed' && (
@@ -350,7 +449,7 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
                           <RotateCcw className="h-4 w-4" />
                         </button>
                       )}
-                      
+
                       {(status === 'pending' || status === 'running') && (
                         <button
                           onClick={(e) => handleCancelJob(job.id, e)}
@@ -373,58 +472,60 @@ const JobList = ({ onJobSelect, selectedJobId }) => {
                     </div>
                   </div>
                 </div>
+
+                {isExpanded && (
+                  <div className="mt-4 bg-white rounded border border-blue-100 p-4 text-sm">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <div className="text-gray-500 mb-1">Job Info</div>
+                        <div className="space-y-1 text-gray-800">
+                          <div><span className="text-gray-500">ID:</span> {job.id}</div>
+                          <div><span className="text-gray-500">Priority:</span> {job.priority}</div>
+                          <div><span className="text-gray-500">Locked By:</span> {job.lockedBy || '—'}</div>
+                          <div><span className="text-gray-500">Locked At:</span> {job.lockedAt ? new Date(job.lockedAt).toLocaleString() : '—'}</div>
+                          <div><span className="text-gray-500">Run At:</span> {job.runAt ? new Date(job.runAt).toLocaleString() : '—'}</div>
+                          <div><span className="text-gray-500">Updated:</span> {new Date(job.updatedAt).toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500 mb-1">Attempts</div>
+                        <div className="space-y-1 text-gray-800">
+                          <div><span className="text-gray-500">Attempts:</span> {job.attempts}</div>
+                          <div><span className="text-gray-500">Max Attempts:</span> {job.maxAttempts}</div>
+                          {job.lastError && (
+                            <div className="mt-2">
+                              <div className="text-gray-500 mb-1">Last Error</div>
+                              <pre className="whitespace-pre-wrap break-words bg-red-50 border border-red-100 text-red-700 p-2 rounded max-h-56 overflow-auto">{job.lastError}</pre>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {typeof job.payload !== 'undefined' && (
+                      <div className="mt-4">
+                        <div className="text-gray-500 mb-1">Payload</div>
+                        <pre className="whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 p-3 rounded max-h-64 overflow-auto">{JSON.stringify(job.payload, null, 2)}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            )
+            );
           })
         )}
       </div>
 
-      {/* Pagination Controls */}
+      {/* Bottom Pagination Controls */}
       {totalPages > 1 && (
-        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-          <div className="text-sm text-gray-700">
-            Showing {currentPage * pageSize + 1} to {Math.min((currentPage + 1) * pageSize, totalCount)} of {totalCount.toLocaleString()} results
-          </div>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
-              disabled={!hasPreviousPage}
-              className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              Previous
-            </button>
-            
-            <div className="flex items-center space-x-1">
-              {/* Show page numbers */}
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                const pageNum = Math.max(0, Math.min(totalPages - 5, currentPage - 2)) + i
-                return (
-                  <button
-                    key={pageNum}
-                    onClick={() => setCurrentPage(pageNum)}
-                    className={`px-3 py-2 text-sm font-medium rounded-md ${
-                      pageNum === currentPage
-                        ? 'bg-blue-600 text-white'
-                        : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    {pageNum + 1}
-                  </button>
-                )
-              })}
-            </div>
-            
-            <button
-              onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
-              disabled={!hasNextPage}
-              className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Next
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </button>
-          </div>
-        </div>
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalCount={totalCount}
+          pageSize={pageSize}
+          hasNextPage={hasNextPage}
+          hasPreviousPage={hasPreviousPage}
+          onPageChange={(p) => setCurrentPage(p)}
+        />
       )}
     </div>
   )

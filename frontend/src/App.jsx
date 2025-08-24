@@ -1,8 +1,8 @@
-import React, { useState } from 'react'
+import React from 'react'
+import { Routes, Route, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@apollo/client'
 import { gql } from '@apollo/client'
 import JobList from './components/JobList'
-import JobDetails from './components/JobDetails'
 import Dashboard from './components/Dashboard'
 import { 
   Activity, 
@@ -19,24 +19,35 @@ import {
   X
 } from 'lucide-react'
 
-// Dashboard query - fetch all jobs for accurate stats
+// Dashboard query - optimized with server-side filtering (connection filter plugin)
 const GET_DASHBOARD_DATA_QUERY = gql`
   query GetDashboardData {
-    allJobs {
+    total: allJobs {
       totalCount
+    }
+    running: allJobs(filter: { lockedAt: { isNull: false } }) {
+      totalCount
+    }
+    failed: allJobs(filter: { lastError: { isNull: false }, lockedAt: { isNull: true } }) {
+      totalCount
+    }
+    completed: allJobs(
+      filter: { attempts: { greaterThan: 0 }, lastError: { isNull: true }, lockedAt: { isNull: true } }
+    ) {
+      totalCount
+    }
+    failedJobs: allJobs(first: 25, orderBy: [UPDATED_AT_DESC], filter: { lastError: { isNull: false } }) {
       nodes {
         id
-        queueName
         taskIdentifier
-        priority
-        runAt
-        attempts
-        maxAttempts
         lastError
-        createdAt
         updatedAt
-        lockedAt
-        lockedBy
+      }
+    }
+    taskGroups: allJobs {
+      groupedAggregates(groupBy: TASK_IDENTIFIER) {
+        keys
+        distinctCount { id }
       }
     }
   }
@@ -73,44 +84,53 @@ const GET_JOBS_QUERY = gql`
 `
 
 function App() {
-  const [activeTab, setActiveTab] = useState('dashboard')
-  const [selectedJobId, setSelectedJobId] = useState(null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const navigate = useNavigate()
+  const [sidebarOpen, setSidebarOpen] = React.useState(false)
 
   // Use optimized dashboard query with pg-aggregates
   const { data, loading, error, refetch } = useQuery(GET_DASHBOARD_DATA_QUERY, {
-    pollInterval: 5000, // Poll every 5 seconds for updates
+    pollInterval: 30000, // Poll every 5 seconds for updates
     errorPolicy: 'all', // Continue if some parts fail
   })
 
   const navigation = [
-    { id: 'dashboard', label: 'Dashboard', icon: BarChart3, description: 'Overview & Stats' },
-    { id: 'jobs', label: 'Jobs', icon: List, description: 'Browse & Manage' },
-    { id: 'queues', label: 'Queues', icon: Clock, description: 'Queue Status' },
-    { id: 'activity', label: 'Activity', icon: Activity, description: 'Recent Events' },
-    { id: 'settings', label: 'Settings', icon: Settings, description: 'Configuration' },
+    { id: 'dashboard', path: '/', label: 'Dashboard', icon: BarChart3, description: 'Overview & Stats' },
+    { id: 'jobs', path: '/jobs', label: 'Jobs', icon: List, description: 'Browse & Manage' },
+    { id: 'queues', path: '/queues', label: 'Queues', icon: Clock, description: 'Queue Status' },
+    { id: 'activity', path: '/activity', label: 'Activity', icon: Activity, description: 'Recent Events' },
+    { id: 'settings', path: '/settings', label: 'Settings', icon: Settings, description: 'Configuration' },
   ]
 
-  const handleJobSelect = (jobId) => {
-    setSelectedJobId(jobId)
-    setActiveTab('jobs')
+  const handleJobSelect = () => {
+    navigate('/jobs')
   }
 
-  // Calculate job stats from ALL jobs (like it was working before)
-  const jobs = data?.allJobs?.nodes || []
+  // Use optimized counts (pending derived to avoid column-to-column comparison)
+  const counts = {
+    total: data?.total?.totalCount ?? 0,
+    running: data?.running?.totalCount ?? 0,
+    failed: data?.failed?.totalCount ?? 0,
+    completed: data?.completed?.totalCount ?? 0,
+  }
   const jobStats = {
-    total: jobs.length,
-    pending: jobs.filter(job => !job.lockedAt && job.attempts < job.maxAttempts).length,
-    running: jobs.filter(job => job.lockedAt).length,
-    failed: jobs.filter(job => job.lastError && !job.lockedAt).length,
-    completed: jobs.filter(job => job.attempts > 0 && !job.lastError && !job.lockedAt).length,
+    ...counts,
+    pending: Math.max(0, (counts.total || 0) - (counts.running || 0) - (counts.failed || 0) - (counts.completed || 0)),
   }
   
-  // Recent failed jobs for Dashboard
-  const recentFailedJobs = jobs
-    .filter(job => job.lastError)
-    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-    .slice(0, 5)
+  // Recent failed jobs from server-side filtered query
+  const recentFailedJobs = data?.failedJobs?.nodes || []
+
+  // Task chart data from aggregates across all jobs
+  const taskChartData = React.useMemo(() => {
+    const groups = data?.taskGroups?.groupedAggregates || []
+    const items = groups.map(g => {
+      const name = String((g.keys && g.keys[0]) ?? 'Unknown')
+      const total = Number(g.distinctCount?.id ?? 0)
+      return { name, total }
+    })
+    // sort desc and take top 8 for readability
+    return items.sort((a, b) => b.total - a.total).slice(0, 8)
+  }, [data])
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -159,27 +179,26 @@ function App() {
           <nav className="flex-1 px-4 py-6 space-y-2">
             {navigation.map((item) => {
               const Icon = item.icon
-              const isActive = activeTab === item.id
               return (
-                <button
+                <NavLink
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
+                  to={item.path}
+                  end={item.path === '/'}
+                  className={({ isActive }) => `w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
                     isActive
                       ? 'bg-blue-50 text-blue-700 border-r-2 border-blue-700'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                   }`}
+                  onClick={() => setSidebarOpen(false)}
                 >
-                  <Icon className={`mr-3 h-5 w-5 ${
-                    isActive ? 'text-blue-500' : 'text-gray-400'
-                  }`} />
+                  <Icon className={`mr-3 h-5 w-5`} />
                   <div className="text-left">
                     <div>{item.label}</div>
                     <div className="text-xs text-gray-500">{item.description}</div>
                   </div>
-                </button>
-              )
-            })}
+                </NavLink>
+              )}
+            )}
           </nav>
 
           {/* Footer */}
@@ -241,64 +260,54 @@ function App() {
             </div>
           )}
 
-          {activeTab === 'dashboard' && (
-            <Dashboard 
-              jobs={jobs} 
-              loading={loading}
-              onJobSelect={handleJobSelect}
-              jobStats={jobStats}
-              recentFailedJobs={recentFailedJobs}
-            />
-          )}
-
-          {activeTab === 'jobs' && (
-            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-              <div className="xl:col-span-3">
-                <JobList 
-                  onJobSelect={setSelectedJobId}
-                  selectedJobId={selectedJobId}
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <Dashboard
+                  loading={loading}
+                  onJobSelect={handleJobSelect}
+                  jobStats={jobStats}
+                  recentFailedJobs={recentFailedJobs}
+                  taskChartData={taskChartData}
                 />
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <Dashboard
+                  loading={loading}
+                  onJobSelect={handleJobSelect}
+                  jobStats={jobStats}
+                  recentFailedJobs={recentFailedJobs}
+                  taskChartData={taskChartData}
+                />
+              }
+            />
+            <Route path="/jobs" element={<JobList />} />
+            <Route path="/queues" element={(
+              <div className="text-center py-16">
+                <Clock className="mx-auto h-16 w-16 text-gray-300" />
+                <h3 className="mt-4 text-lg font-medium text-gray-900">Queue Management</h3>
+                <p className="mt-2 text-gray-500">Queue monitoring and management features coming soon...</p>
               </div>
-              <div className="xl:col-span-1">
-                {selectedJobId && (
-                  <JobDetails 
-                    jobId={selectedJobId}
-                    onRefresh={refetch}
-                  />
-                )}
+            )} />
+            <Route path="/activity" element={(
+              <div className="text-center py-16">
+                <Activity className="mx-auto h-16 w-16 text-gray-300" />
+                <h3 className="mt-4 text-lg font-medium text-gray-900">Activity Log</h3>
+                <p className="mt-2 text-gray-500">Real-time activity monitoring coming soon...</p>
               </div>
-            </div>
-          )}
-
-          {activeTab === 'queues' && (
-            <div className="text-center py-16">
-              <Clock className="mx-auto h-16 w-16 text-gray-300" />
-              <h3 className="mt-4 text-lg font-medium text-gray-900">Queue Management</h3>
-              <p className="mt-2 text-gray-500">
-                Queue monitoring and management features coming soon...
-              </p>
-            </div>
-          )}
-
-          {activeTab === 'activity' && (
-            <div className="text-center py-16">
-              <Activity className="mx-auto h-16 w-16 text-gray-300" />
-              <h3 className="mt-4 text-lg font-medium text-gray-900">Activity Log</h3>
-              <p className="mt-2 text-gray-500">
-                Real-time activity monitoring coming soon...
-              </p>
-            </div>
-          )}
-
-          {activeTab === 'settings' && (
-            <div className="text-center py-16">
-              <Settings className="mx-auto h-16 w-16 text-gray-300" />
-              <h3 className="mt-4 text-lg font-medium text-gray-900">Settings</h3>
-              <p className="mt-2 text-gray-500">
-                Configuration options coming soon...
-              </p>
-            </div>
-          )}
+            )} />
+            <Route path="/settings" element={(
+              <div className="text-center py-16">
+                <Settings className="mx-auto h-16 w-16 text-gray-300" />
+                <h3 className="mt-4 text-lg font-medium text-gray-900">Settings</h3>
+                <p className="mt-2 text-gray-500">Configuration options coming soon...</p>
+              </div>
+            )} />
+          </Routes>
         </main>
       </div>
 

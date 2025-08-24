@@ -1,8 +1,8 @@
 import React from 'react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import { Clock, CheckCircle2, XCircle, AlertTriangle, Play, TrendingUp, TrendingDown, Zap } from 'lucide-react'
 
-const Dashboard = ({ jobs, loading, onJobSelect, jobStats, recentFailedJobs = [] }) => {
+const Dashboard = ({ jobs, loading, onJobSelect, jobStats, recentFailedJobs = [], taskChartData = [] }) => {
   if (loading) {
     return (
       <div className="space-y-6">
@@ -87,26 +87,19 @@ const Dashboard = ({ jobs, loading, onJobSelect, jobStats, recentFailedJobs = []
     }
   ]
 
-  // Group jobs by task identifier for chart
-  const taskStats = jobs.reduce((acc, job) => {
-    const task = job.taskIdentifier || 'Unknown'
-    if (!acc[task]) {
-      acc[task] = { name: task, total: 0, failed: 0, pending: 0, running: 0, completed: 0 }
-    }
-    acc[task].total++
-    if (job.attempts >= job.maxAttempts && job.lastError) {
-      acc[task].failed++
-    } else if (job.lockedAt) {
-      acc[task].running++
-    } else if (job.attempts > 0 && !job.lastError && !job.lockedAt) {
-      acc[task].completed++
-    } else {
-      acc[task].pending++
-    }
-    return acc
-  }, {})
-
-  const chartData = Object.values(taskStats).slice(0, 8) // Top 8 tasks
+  // Use aggregated taskChartData if provided; fallback to recent jobs grouping
+  const chartData = React.useMemo(() => {
+    if (taskChartData && taskChartData.length > 0) return taskChartData
+    const taskStats = jobs.reduce((acc, job) => {
+      const task = job.taskIdentifier || 'Unknown'
+      if (!acc[task]) {
+        acc[task] = { name: task, total: 0 }
+      }
+      acc[task].total++
+      return acc
+    }, {})
+    return Object.values(taskStats).slice(0, 8)
+  }, [taskChartData, jobs])
 
   // Status distribution for pie chart
   const statusData = [
@@ -115,16 +108,6 @@ const Dashboard = ({ jobs, loading, onJobSelect, jobStats, recentFailedJobs = []
     { name: 'Completed', value: stats.completed, color: '#3B82F6' },
     { name: 'Failed', value: stats.failed, color: '#EF4444' }
   ].filter(item => item.value > 0)
-
-  // Mock time series data for activity chart
-  const activityData = [
-    { time: '00:00', jobs: 12 },
-    { time: '04:00', jobs: 8 },
-    { time: '08:00', jobs: 25 },
-    { time: '12:00', jobs: 18 },
-    { time: '16:00', jobs: 32 },
-    { time: '20:00', jobs: 15 }
-  ]
 
   // Use the pre-filtered recent failed jobs from the optimized query
   // This is now passed as a prop from the pg-aggregates optimized query
@@ -164,7 +147,6 @@ const Dashboard = ({ jobs, loading, onJobSelect, jobStats, recentFailedJobs = []
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-gray-900">Jobs by Task</h3>
-            <div className="text-sm text-gray-500">Last 24 hours</div>
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -241,48 +223,8 @@ const Dashboard = ({ jobs, loading, onJobSelect, jobStats, recentFailedJobs = []
         </div>
       </div>
 
-      {/* Activity Timeline and Recent Failures */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Activity Timeline */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-semibold text-gray-900">Job Activity</h3>
-            <div className="text-sm text-gray-500">Today</div>
-          </div>
-          <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={activityData}>
-                <defs>
-                  <linearGradient id="colorJobs" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="time" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#fff', 
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                  }}
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="jobs" 
-                  stroke="#3B82F6" 
-                  strokeWidth={2}
-                  fillOpacity={1} 
-                  fill="url(#colorJobs)" 
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Recent Failed Jobs */}
+      {/* Recent Failures */}
+      <div className="grid grid-cols-1 gap-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-gray-900">Recent Failures</h3>
