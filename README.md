@@ -1,217 +1,86 @@
 # Graphile Worker UI
 
-A comprehensive web-based user interface for monitoring and managing [Graphile Worker](https://github.com/graphile/worker) job queues. Built with PostGraphile backend and React frontend, providing real-time job monitoring, management capabilities, and beautiful visualizations.
+A modern, real-time observability dashboard for [Graphile Worker](https://github.com/graphile/worker) — the Postgres-backed job queue for Node.js. It gives you a live picture of *what your workers are actually doing*: state over time, throughput, stuck queues, crashed workers, error hot-spots, and full job management.
+
+Inspired by the best of Oban Web, Sidekiq, Hangfire, and Temporal — adapted to graphile-worker's data model (where **successful jobs are deleted on completion**, so history is reconstructed from periodic snapshots the UI records itself).
 
 ## Features
 
-- **📊 Dashboard**: Real-time job statistics with charts and status overview
-- **📋 Job Management**: View, search, filter, and manage jobs
-- **🔄 Job Actions**: Retry failed jobs, cancel pending jobs, mark jobs as complete
-- **📱 Real-time Updates**: Live job status updates via GraphQL subscriptions
-- **🎨 Modern UI**: Clean, responsive interface built with Tailwind CSS
-- **🐳 Docker Ready**: Complete containerization with Docker Compose
+- **Overview** — live counts (available / running / retrying / failed / scheduled), a stacked *jobs-by-state over time* chart, a derived *enqueue-rate* throughput chart, health signals (oldest waiting job, longest-held lock, ready-now backlog), top tasks and top error signatures.
+- **Jobs** — a fast, filterable, sortable table with URL-persisted state, payload/error previews, per-row derived state badges, and **bulk actions** (retry, run-now, fail, delete). Paginated and live.
+- **Job detail** — pretty-printed payload, full error stack, a lifecycle timeline, every column, and one-click actions (retry, run now, complete, permanently fail, delete, set priority).
+- **Queues** — backlog depth per named queue, lock status with **stale-lock detection**, and one-click unlock for stuck queues.
+- **Workers** — active workers inferred from job locks, with **crashed-worker detection** and lock release.
+- **Tasks** — every task identifier with a per-state distribution and drill-through to the Jobs view.
+- **Schedules** — known crontabs with last-execution and stale/never-run flags.
+- **Dark-first UI** with a light toggle, a global live-refresh control (auto-pauses when the tab is hidden), and toasts for every action.
 
 ## Architecture
 
-### Backend
-- **PostGraphile**: Auto-generates GraphQL API from PostgreSQL schema
-- **Node.js v22**: Latest LTS with native `--env-file` support
-- **Custom Mutations**: Job management operations (retry, cancel, complete)
-- **WebSocket Subscriptions**: Real-time job updates
+### Backend (`backend/`)
+- **PostGraphile v4** auto-generates the GraphQL API used for flexible, filtered job browsing (`allJobs`, `_privateJobById`).
+- A small **REST layer** (`/api/*`) serves the aggregate reads that are easiest in raw SQL and all mutating actions. See `lib/observability.js`, `lib/metrics.js`, `lib/actions.js`.
+- A **metrics collector** samples queue counts on an interval and stores compact rows in its own `graphile_worker_ui.metrics_snapshots` table (created idempotently on boot; auto-pruned). This is what powers the historical charts — nothing else is written to the `graphile_worker` schema.
+- Job actions prefer graphile-worker's own admin functions (`reschedule_jobs`, `permanently_fail_jobs`, `complete_jobs`, `force_unlock_workers`) and fall back to safe, parameterised SQL where a function doesn't exist.
 
-### Frontend
-- **React 18**: Modern React with hooks and concurrent features
-- **Apollo Client**: GraphQL client with caching and subscriptions
-- **Tailwind CSS**: Utility-first CSS framework
-- **Vite**: Fast build tool and development server
-- **Recharts**: Beautiful charts for job statistics
+### Frontend (`frontend/`)
+- **React 18 + Vite + Tailwind** with a small design system (`components/ui.jsx`), **Apollo Client** for GraphQL, **Recharts** for charts, and a REST client (`lib/api.js`).
+- One shared `deriveState()` job-state model (`lib/jobState.js`) mirrors the backend's `STATE_SQL` so the UI and API always agree.
 
 ## Quick Start
 
 ### Prerequisites
 - Node.js v22+
-- PostgreSQL with Graphile Worker schema
-- Existing Graphile Worker setup
+- A PostgreSQL database with the Graphile Worker schema installed
 
-### Development Setup
+### Development
 
-1. **Clone and navigate to the project:**
-   ```bash
-   cd web/graphile-worker
-   ```
-
-2. **Configure environment:**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your database connection details
-   ```
-
-3. **Start development servers:**
-   ```bash
-   ./start-dev.sh
-   ```
-
-4. **Access the application:**
+1. **Configure:** `cp .env.example .env` and point `DATABASE_URL` at your database.
+2. **Run:** `./start-dev.sh`
+3. **Open:**
    - Frontend: http://localhost:3001
-   - GraphQL API: http://localhost:5001/graphql
-   - GraphiQL: http://localhost:5001/graphiql
+   - GraphQL API / GraphiQL: http://localhost:5001/graphql · http://localhost:5001/graphiql
 
-### Docker Deployment
-
-1. **Configure environment:**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your production database details
-   ```
-
-2. **Start with Docker Compose:**
-   ```bash
-   docker-compose up -d
-   ```
-
-3. **Access the application:**
-   - Frontend: http://localhost:3001
-   - Backend: http://localhost:5001
-
-## Configuration
-
-### Environment Variables
-
-All configuration is managed through a single `.env` file in the root directory:
+### Docker
 
 ```bash
-# Database Configuration
-DATABASE_URL=postgres://postgres:password@localhost:5432/pet
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=pet
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=password
-
-# Backend Server Configuration
-PORT=5001
-NODE_ENV=development
-FRONTEND_URL=http://localhost:3001
-
-# Frontend Configuration
-VITE_GRAPHQL_URL=http://localhost:5001/graphql
-VITE_GRAPHQL_WS_URL=ws://localhost:5001/graphql
-VITE_NODE_ENV=development
-
-# Docker Compose Environment
-COMPOSE_PROJECT_NAME=graphile-worker-ui
-```
-
-## Development
-
-### Project Structure
-```
-web/graphile-worker/
-├── backend/                 # PostGraphile backend
-│   ├── index.js            # Main server file
-│   ├── package.json        # Backend dependencies
-│   └── Dockerfile          # Backend container
-├── frontend/               # React frontend
-│   ├── src/
-│   │   ├── components/     # React components
-│   │   ├── App.jsx         # Main app component
-│   │   └── main.jsx        # App entry point
-│   ├── package.json        # Frontend dependencies
-│   └── Dockerfile          # Frontend container
-├── docker-compose.yml      # Container orchestration
-├── start-dev.sh           # Development startup script
-└── .env.example           # Environment template
-```
-
-### Key Components
-
-- **Dashboard**: Job statistics, charts, and recent activity
-- **JobList**: Searchable, filterable job listing with actions
-- **JobDetails**: Detailed job information and management
-
-### Available Scripts
-
-#### Backend
-```bash
-cd backend
-npm run dev    # Start with nodemon and --env-file
-npm start      # Production start with --env-file
-```
-
-#### Frontend
-```bash
-cd frontend
-npm run dev    # Vite development server
-npm run build  # Production build
-npm run preview # Preview production build
+cp .env.example .env   # edit for your DB
+docker-compose up -d
 ```
 
 ## API Reference
 
-The backend exposes a GraphQL API with the following key operations:
+### REST (`/api`)
+| Method & path | Purpose |
+| --- | --- |
+| `GET /overview` | Live state counts, per-task breakdown, top errors |
+| `GET /metrics/timeseries?window=15m\|1h\|6h\|24h\|7d` | Downsampled snapshot series + derived enqueue rate |
+| `GET /tasks` · `/queues` · `/workers` · `/errors` · `/crontabs` | Page data |
+| `POST /jobs/:action` | `retry` · `runNow` · `reschedule` · `setPriority` · `fail` · `complete` · `delete` — body `{ ids: [...], ...opts }` |
+| `POST /queues/unlock` | Clear a stuck queue lock — body `{ queueNames: [...] }` |
+| `POST /workers/unlock` | Release a crashed worker's locks — body `{ workerIds: [...] }` |
 
-### Queries
-- `jobs`: List all jobs with filtering options
-- `job(id: Int!)`: Get specific job details
+### GraphQL (`/graphql`)
+Auto-generated by PostGraphile over the `graphile_worker` schema (connection-filter + pg-aggregates). Used by the frontend for `allJobs` (filtered browsing) and `_privateJobById` (detail with payload).
 
-### Mutations
-- `retryJob(jobId: Int!)`: Retry a failed job
-- `cancelJob(jobId: Int!)`: Cancel a pending job
-- `completeJob(jobId: Int!)`: Mark job as complete
+## Configuration
 
-### Subscriptions
-- `jobUpdated`: Real-time job status updates
+All config is via the root `.env` (see `.env.example`). Notable optional vars:
 
-## Production Deployment
+- `GW_UI_SNAPSHOT_INTERVAL_MS` (default `5000`) — how often the metrics collector samples.
+- `GW_UI_SNAPSHOT_RETENTION_DAYS` (default `7`) — how long snapshots are kept.
+- `VITE_API_URL` — override the REST base (defaults to `VITE_GRAPHQL_URL` with `/graphql` → `/api`).
 
-### Docker Compose (Recommended)
-```bash
-# Production deployment
-docker-compose -f docker-compose.yml up -d
+## Notes on graphile-worker's data model
 
-# With custom environment
-docker-compose --env-file .env.production up -d
-```
+graphile-worker **deletes jobs as soon as they succeed**, so there is no built-in completion history. Job states are therefore derived from live columns:
 
-### Manual Deployment
-1. Build frontend: `cd frontend && npm run build`
-2. Start backend: `cd backend && npm start`
-3. Serve frontend build with nginx or similar
+| State | Condition |
+| --- | --- |
+| Running | `locked_at` is set |
+| Failed | has `last_error` and `attempts >= max_attempts` |
+| Retrying | has `last_error` and `attempts < max_attempts` |
+| Scheduled | `run_at` is in the future |
+| Available | ready to run now |
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Connection Refused**: Ensure PostgreSQL is running and accessible
-2. **GraphQL Errors**: Verify Graphile Worker schema exists in database
-3. **Environment Variables**: Check `.env` file configuration
-4. **Port Conflicts**: Ensure ports 3001 and 5001 are available
-
-### Logs
-```bash
-# Docker logs
-docker-compose logs -f backend
-docker-compose logs -f frontend
-
-# Development logs
-# Backend and frontend logs appear in terminal when using start-dev.sh
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## License
-
-This project is part of the larger pet project and follows the same licensing terms.
-
-## Support
-
-For issues and questions:
-1. Check the troubleshooting section
-2. Review Graphile Worker documentation
-3. Open an issue in the project repository
+Throughput is inferred from movement of the job-id sequence between snapshots, since completed rows can't be counted directly.
