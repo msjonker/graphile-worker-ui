@@ -16,11 +16,21 @@ export const STATE_SQL = `
 export const STATES = ['available', 'running', 'retrying', 'failed', 'scheduled'];
 
 // Whole-system snapshot: one row of counts + a few health signals.
+//
+// The metrics collector runs this every few seconds whether or not anyone is
+// looking, so it has to stay cheap at any queue depth. Two things keep it so:
+//   - It reads _private_jobs, not the `jobs` view: every column STATE_SQL needs
+//     is on the table, and the view's task/queue joins only widen each row.
+//   - active_workers is a subquery over the locked rows alone. As
+//     `count(DISTINCT locked_by)` in the main aggregate, Postgres presorted
+//     EVERY job row by locked_by to feed it, and with a backed-up queue that
+//     sort went to disk: ~25MB of temp file per call, 21TB over seven weeks on
+//     one install, from a dashboard nobody had open.
 export async function getOverview() {
   const [row] = await query(`
     WITH s AS (
-      SELECT ${STATE_SQL} AS state, j.run_at, j.locked_at, j.locked_by, j.id
-      FROM graphile_worker.jobs j
+      SELECT ${STATE_SQL} AS state, j.run_at, j.locked_at, j.id
+      FROM graphile_worker._private_jobs j
     )
     SELECT
       count(*)                                            AS total,
@@ -32,7 +42,8 @@ export async function getOverview() {
       count(*) FILTER (WHERE state = 'available'
                          AND run_at <= now())             AS ready_now,
       max(id)                                             AS max_job_id,
-      count(DISTINCT locked_by) FILTER (WHERE locked_by IS NOT NULL) AS active_workers,
+      (SELECT count(DISTINCT locked_by) FROM graphile_worker._private_jobs
+        WHERE locked_by IS NOT NULL)                      AS active_workers,
       extract(epoch FROM (now() - min(run_at) FILTER (WHERE state = 'available')))::int AS oldest_available_secs,
       extract(epoch FROM (now() - min(locked_at) FILTER (WHERE locked_at IS NOT NULL)))::int AS oldest_lock_secs
     FROM s
